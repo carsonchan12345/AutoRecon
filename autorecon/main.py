@@ -973,14 +973,18 @@ async def run():
 		plugins_dirs.append(config['add_plugins_dir'])
 
 	for plugins_dir in plugins_dirs:
-		for plugin_file in sorted(os.listdir(plugins_dir)):
-			if not plugin_file.startswith('_') and plugin_file.endswith('.py'):
+		for root, dirnames, filenames in os.walk(plugins_dir):
+			dirnames[:] = sorted([d for d in dirnames if not d.startswith('.') and not d.startswith('_')])
+			for plugin_file in sorted(filenames):
+				if plugin_file.startswith('_') or not plugin_file.endswith('.py'):
+					continue
 
-				dirname, filename = os.path.split(os.path.join(plugins_dir, plugin_file))
+				filepath = os.path.join(root, plugin_file)
+				dirname, filename = os.path.split(filepath)
 				dirname = os.path.abspath(dirname)
 
 				try:
-					spec = importlib.util.spec_from_file_location("autorecon." + filename[:-3], os.path.join(dirname, filename))
+					spec = importlib.util.spec_from_file_location("autorecon." + filename[:-3], filepath)
 					plugin = importlib.util.module_from_spec(spec)
 					spec.loader.exec_module(plugin)
 
