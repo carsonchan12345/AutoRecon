@@ -29,11 +29,34 @@ jobs:
           python -m pip install pip-audit
 
       - name: Run pip-audit
+        id: pip_audit
+        shell: bash
         run: |
+          set -o pipefail
+          exit_code=0
+
           if [ -f requirements.txt ]; then
-            pip-audit -r requirements.txt
+            pip-audit -r requirements.txt --format sarif -o pip-audit.sarif || exit_code=$?
           elif [ -f pyproject.toml ]; then
-            pip-audit -P pyproject.toml
+            pip-audit -P pyproject.toml --format sarif -o pip-audit.sarif || exit_code=$?
           else
-            pip-audit
+            pip-audit --format sarif -o pip-audit.sarif || exit_code=$?
           fi
+
+          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
+            exit "$exit_code"
+          fi
+
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
+      - name: Upload pip-audit results
+        if: always() && steps.pip_audit.outputs.exit_code != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: pip-audit.sarif
+
+      - name: Fail workflow on pip-audit findings
+        if: steps.pip_audit.outputs.exit_code == '1'
+        run: |
+          echo '::error::pip-audit detected known vulnerabilities. Review the "Dependency Audit" workflow run for details.'
+          exit 1
