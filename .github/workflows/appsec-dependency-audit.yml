@@ -9,54 +9,42 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
-  pip-audit:
-    name: pip-audit
+  dependency-check:
+    name: OWASP Dependency-Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Run OWASP Dependency-Check
+        id: dependency_check
+        uses: dependency-check/Dependency-Check_Action@v3.2.1
         with:
-          python-version: '3.x'
+          project: AutoRecon
+          path: .
+          format: 'SARIF'
+          out: reports
+          failOnCVSS: '11'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pip-audit
-
-      - name: Run pip-audit
-        id: pip_audit
-        shell: bash
-        run: |
-          set -o pipefail
-          exit_code=0
-
-          if [ -f requirements.txt ]; then
-            pip-audit -r requirements.txt --format sarif -o pip-audit.sarif || exit_code=$?
-          elif [ -f pyproject.toml ]; then
-            pip-audit -P pyproject.toml --format sarif -o pip-audit.sarif || exit_code=$?
-          else
-            pip-audit --format sarif -o pip-audit.sarif || exit_code=$?
-          fi
-
-          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
-            exit "$exit_code"
-          fi
-
-          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-
-      - name: Upload pip-audit results
-        if: always() && steps.pip_audit.outputs.exit_code != ''
+      - name: Upload Dependency-Check results
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: pip-audit.sarif
+          sarif_file: reports/dependency-check-report.sarif
 
-      - name: Fail workflow on pip-audit findings
-        if: steps.pip_audit.outputs.exit_code == '1'
+      - name: Fail workflow on Dependency-Check findings
+        if: steps.dependency_check.outcome == 'success'
         run: |
-          echo '::error::pip-audit detected known vulnerabilities. Review the "Dependency Audit" workflow run for details.'
-          exit 1
+          if [ -f reports/dependency-check-report.json ]; then
+            vulnerabilities=$(jq '[.dependencies[]? | (.vulnerabilities // []) | length] | add // 0' reports/dependency-check-report.json)
+          else
+            vulnerabilities=0
+          fi
+
+          if [ "$vulnerabilities" -gt 0 ]; then
+            echo "::error::OWASP Dependency-Check detected $vulnerabilities vulnerable dependency occurrences. Review the 'Dependency Audit' workflow run for details."
+            exit 1
+          fi
