@@ -1,0 +1,60 @@
+name: Dependency Audit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-check:
+    name: OWASP Dependency-Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run OWASP Dependency-Check
+        id: dependency_check
+        uses: dependency-check/Dependency-Check_Action@1.1.0
+        continue-on-error: true
+        with:
+          project: AutoRecon
+          path: .
+          format: 'SARIF'
+          out: reports
+          args: >
+            --format JSON
+            --failOnCVSS 0
+
+      - name: Upload Dependency-Check results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/dependency-check-report.sarif
+
+      - name: Evaluate Dependency-Check results
+        if: always()
+        env:
+          DEPENDENCY_CHECK_OUTCOME: ${{ steps.dependency_check.outcome }}
+        run: |
+          if [ -f reports/dependency-check-report.json ]; then
+            vulnerabilities=$(jq '[.dependencies[]? | (.vulnerabilities // []) | length] | add // 0' reports/dependency-check-report.json)
+          else
+            vulnerabilities=0
+          fi
+
+          if [ "$vulnerabilities" -gt 0 ]; then
+            echo "::error::OWASP Dependency-Check detected $vulnerabilities vulnerable dependency occurrences. Review the 'Dependency Audit' workflow run for details."
+            exit 1
+          fi
+
+          if [ "$DEPENDENCY_CHECK_OUTCOME" = "failure" ]; then
+            echo "::error::OWASP Dependency-Check failed to complete successfully. Review the 'Dependency Audit' workflow logs for diagnostics."
+            exit 1
+          fi
