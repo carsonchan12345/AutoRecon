@@ -972,42 +972,42 @@ async def run():
 	if config['add_plugins_dir']:
 		plugins_dirs.append(config['add_plugins_dir'])
 
-        for plugins_dir in plugins_dirs:
-                for root, dirnames, filenames in os.walk(plugins_dir):
-                        dirnames[:] = sorted([d for d in dirnames if not d.startswith('.') and not d.startswith('_')])
-                        for plugin_file in sorted(filenames):
-                                if plugin_file.startswith('_') or not plugin_file.endswith('.py'):
-                                        continue
+	for plugins_dir in plugins_dirs:
+		for root, dirnames, filenames in os.walk(plugins_dir):
+			dirnames[:] = sorted([d for d in dirnames if not d.startswith('.') and not d.startswith('_')])
+			for plugin_file in sorted(filenames):
+				if plugin_file.startswith('_') or not plugin_file.endswith('.py'):
+					continue
 
-                                filepath = os.path.join(root, plugin_file)
-                                dirname, filename = os.path.split(filepath)
-                                dirname = os.path.abspath(dirname)
+				filepath = os.path.join(root, plugin_file)
+				dirname, filename = os.path.split(filepath)
+				dirname = os.path.abspath(dirname)
 
-                                try:
-                                        spec = importlib.util.spec_from_file_location("autorecon." + filename[:-3], filepath)
-                                        plugin = importlib.util.module_from_spec(spec)
-                                        spec.loader.exec_module(plugin)
+				try:
+					spec = importlib.util.spec_from_file_location("autorecon." + filename[:-3], filepath)
+					plugin = importlib.util.module_from_spec(spec)
+					spec.loader.exec_module(plugin)
 
-                                        clsmembers = inspect.getmembers(plugin, predicate=inspect.isclass)
-                                        for (_, c) in clsmembers:
-                                                if c.__module__ in ['autorecon.plugins', 'autorecon.targets']:
-                                                        continue
+					clsmembers = inspect.getmembers(plugin, predicate=inspect.isclass)
+					for (_, c) in clsmembers:
+						if c.__module__ in ['autorecon.plugins', 'autorecon.targets']:
+							continue
 
-                                                if c.__name__.lower() in config['protected_classes']:
-                                                        unknown_help()
-                                                        print('Plugin "' + c.__name__ + '" in ' + filename + ' is using a protected class name. Please change it.')
-                                                        sys.exit(1)
+						if c.__name__.lower() in config['protected_classes']:
+							unknown_help()
+							print('Plugin "' + c.__name__ + '" in ' + filename + ' is using a protected class name. Please change it.')
+							sys.exit(1)
 
-                                                # Only add classes that are a sub class of either PortScan, ServiceScan, or Report
-                                                if issubclass(c, PortScan) or issubclass(c, ServiceScan) or issubclass(c, Report):
-                                                        autorecon.register(c(), filename)
-                                                else:
-                                                        print('Plugin "' + c.__name__ + '" in ' + filename + ' is not a subclass of either PortScan, ServiceScan, or Report.')
-                                except (ImportError, SyntaxError) as ex:
-                                        unknown_help()
-                                        print('cannot import ' + filename + ' plugin')
-                                        print(ex)
-                                        sys.exit(1)
+						# Only add classes that are a sub class of either PortScan, ServiceScan, or Report
+						if issubclass(c, PortScan) or issubclass(c, ServiceScan) or issubclass(c, Report):
+							autorecon.register(c(), filename)
+						else:
+							print('Plugin "' + c.__name__ + '" in ' + filename + ' is not a subclass of either PortScan, ServiceScan, or Report.')
+				except (ImportError, SyntaxError) as ex:
+					unknown_help()
+					print('cannot import ' + filename + ' plugin')
+					print(ex)
+					sys.exit(1)
 
 	for plugin in autorecon.plugins.values():
 		if plugin.slug in autorecon.taglist:
