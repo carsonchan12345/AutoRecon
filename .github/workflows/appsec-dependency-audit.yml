@@ -21,13 +21,16 @@ jobs:
 
       - name: Run OWASP Dependency-Check
         id: dependency_check
-        uses: dependency-check/Dependency-Check_Action@v3.2.1
+        uses: dependency-check/Dependency-Check_Action@1.1.0
+        continue-on-error: true
         with:
           project: AutoRecon
           path: .
           format: 'SARIF'
           out: reports
-          failOnCVSS: '11'
+          args: >
+            --format JSON
+            --failOnCVSS 0
 
       - name: Upload Dependency-Check results
         if: always()
@@ -35,8 +38,10 @@ jobs:
         with:
           sarif_file: reports/dependency-check-report.sarif
 
-      - name: Fail workflow on Dependency-Check findings
-        if: steps.dependency_check.outcome == 'success'
+      - name: Evaluate Dependency-Check results
+        if: always()
+        env:
+          DEPENDENCY_CHECK_OUTCOME: ${{ steps.dependency_check.outcome }}
         run: |
           if [ -f reports/dependency-check-report.json ]; then
             vulnerabilities=$(jq '[.dependencies[]? | (.vulnerabilities // []) | length] | add // 0' reports/dependency-check-report.json)
@@ -46,5 +51,10 @@ jobs:
 
           if [ "$vulnerabilities" -gt 0 ]; then
             echo "::error::OWASP Dependency-Check detected $vulnerabilities vulnerable dependency occurrences. Review the 'Dependency Audit' workflow run for details."
+            exit 1
+          fi
+
+          if [ "$DEPENDENCY_CHECK_OUTCOME" = "failure" ]; then
+            echo "::error::OWASP Dependency-Check failed to complete successfully. Review the 'Dependency Audit' workflow logs for diagnostics."
             exit 1
           fi
