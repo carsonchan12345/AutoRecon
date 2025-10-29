@@ -290,6 +290,44 @@ global plugin arguments:
                         The domain to use (if known). Used for DNS and/or Active Directory. Default: None
 ```
 
+### Importing existing Nmap results
+
+AutoRecon can skip its initial port-scanning phase when you already have Nmap
+output available. Supply one or more existing Nmap result files with
+`--nmap-import` or point `--nmap-import-dir` at a directory that contains your
+saved scans, and AutoRecon will queue service enumeration directly from that
+data instead of launching fresh Nmap runs.
+
+The importer recognizes any of the standard Nmap formats, so you can mix
+results produced with `-oN`, `-oG`, or `-oX` in the same run. AutoRecon matches
+services to targets by IP address and hostname; make sure the targets you pass
+to AutoRecon (or define in `--target-file`) include the same identifiers that
+appear in the imported files.
+
+Example usage:
+
+```bash
+# Gather Nmap output beforehand
+nmap -sV -oN acme-http.nmap 10.10.10.10
+nmap -sV -oX acme-services.xml 10.10.10.10
+
+# Reuse those results when starting AutoRecon
+autorecon --nmap-import acme-http.nmap acme-services.xml 10.10.10.10
+
+# Or import everything from a directory of saved scans
+autorecon --nmap-import-dir ./nmap-runs 10.10.10.0/24
+```
+
+If the supplied files do not contain any open services, AutoRecon falls back to
+its configured port scans automatically.
+
+You can also preconfigure imports in `~/.config/AutoRecon/config.toml`:
+
+```toml
+nmap_import = ["/path/to/scan1.xml", "/path/to/scan2.gnmap"]
+nmap_import_dir = "/path/to/saved/nmap"
+```
+
 ### Verbosity
 
 AutoRecon supports four levels of verbosity:
