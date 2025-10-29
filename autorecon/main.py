@@ -162,6 +162,9 @@ def parse_nmap_normal_output(content, source):
 			host_section = raw_line.split('Nmap scan report for ', 1)[1].strip()
 			current_hosts = list(extract_host_identifiers(host_section))
 
+			if current_hosts:
+				autorecon.record_imported_host(current_hosts)
+
 			for host in current_hosts:
 				key = autorecon.normalize_host_identifier(host)
 				if key:
@@ -198,6 +201,8 @@ def parse_nmap_gnmap_output(content, source):
 
 		if not hosts:
 			continue
+
+		autorecon.record_imported_host(hosts)
 
 		for host in hosts:
 			key = autorecon.normalize_host_identifier(host)
@@ -269,6 +274,8 @@ def parse_nmap_xml_output(content, source):
 
 		if not identifiers:
 			continue
+
+		autorecon.record_imported_host(identifiers)
 
 		for identifier in identifiers:
 			key = autorecon.normalize_host_identifier(identifier)
@@ -1667,7 +1674,8 @@ async def run():
 		if autorecon.imported_services:
 			host_identifier_count = len(autorecon.imported_services)
 			total_services = sum(len(s) for s in autorecon.imported_services.values())
-			info('Imported Nmap results for ' + str(host_identifier_count) + ' host identifier' + ('s' if host_identifier_count != 1 else '') + ' covering ' + str(total_services) + ' open service' + ('s' if total_services != 1 else '') + '.', verbosity=1)
+			unique_host_count = len(autorecon.get_imported_host_groups())
+			info('Imported Nmap results for ' + str(unique_host_count) + ' host' + ('s' if unique_host_count != 1 else '') + ' (' + str(host_identifier_count) + ' identifier' + ('s' if host_identifier_count != 1 else '') + ') covering ' + str(total_services) + ' open service' + ('s' if total_services != 1 else '') + '.', verbosity=1)
 		elif processed_import_files > 0:
 			warn('The supplied Nmap results did not contain any usable open services. AutoRecon will run its standard port scans.', verbosity=1)
 	elif autorecon.use_imported_results:
@@ -1781,6 +1789,66 @@ async def run():
 	if not args.disable_sanity_checks and unresolvable_targets == True:
 		error('AutoRecon will not run if any targets are invalid / unresolvable. To override this, re-run with the --disable-sanity-checks option.')
 		errors = True
+
+	if len(autorecon.pending_targets) == 0 and autorecon.use_imported_results and autorecon.imported_services:
+		imported_groups = autorecon.get_imported_host_groups()
+		auto_targets = []
+
+		for identifiers in imported_groups:
+			ipv4_addresses = []
+			ipv6_addresses = []
+			hostnames = []
+
+			for identifier in sorted(identifiers):
+				try:
+					ip_obj = ipaddress.ip_address(identifier)
+				except ValueError:
+					hostnames.append(identifier)
+					continue
+
+				if isinstance(ip_obj, ipaddress.IPv4Address):
+					ipv4_addresses.append((ip_obj, identifier))
+				else:
+					ipv6_addresses.append((ip_obj, identifier))
+
+			chosen_identifier = None
+			target_type = 'ip'
+			ip_version = 'IPv4'
+
+			if ipv4_addresses:
+				ipv4_addresses.sort(key=lambda item: item[0])
+				chosen_identifier = ipv4_addresses[0][1]
+				ip_version = 'IPv4'
+			elif ipv6_addresses:
+				ipv6_addresses.sort(key=lambda item: item[0])
+				chosen_identifier = ipv6_addresses[0][1]
+				ip_version = 'IPv6'
+			elif hostnames:
+				hostnames.sort()
+				chosen_identifier = hostnames[0]
+				target_type = 'hostname'
+			else:
+				continue
+
+			target_ip = chosen_identifier
+
+			if target_type == 'hostname' and ipv4_addresses:
+				target_ip = ipv4_addresses[0][1]
+				ip_version = 'IPv4'
+			elif target_type == 'hostname' and ipv6_addresses:
+				target_ip = ipv6_addresses[0][1]
+				ip_version = 'IPv6'
+
+			target = Target(chosen_identifier, target_ip, ip_version, target_type, autorecon)
+			target.imported_identifiers = sorted(identifiers)
+			auto_targets.append(target)
+
+		if auto_targets:
+			auto_targets.sort(key=lambda t: t.address)
+			autorecon.pending_targets.extend(auto_targets)
+			info('No explicit targets were provided; using {byellow}' + str(len(auto_targets)) + '{rst} imported host' + ('s' if len(auto_targets) != 1 else '') + ': ' + ', '.join(t.address for t in auto_targets), verbosity=1)
+		else:
+			warn('Imported Nmap results did not include any usable host identifiers. Provide scan targets explicitly or check the supplied files.', verbosity=1)
 
 	if len(autorecon.pending_targets) == 0:
 		error('You must specify at least one target to scan!')

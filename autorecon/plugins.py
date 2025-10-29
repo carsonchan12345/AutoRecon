@@ -245,6 +245,7 @@ class AutoRecon(object):
 		self.load_module = None
 		self.imported_services = {}
 		self.use_imported_results = False
+		self.imported_host_groups = []
 
 	def add_argument(self, plugin, name, **kwargs):
 		# TODO: make sure name is simple.
@@ -408,26 +409,65 @@ class AutoRecon(object):
 
 		self.imported_services[key].add(tuple(service))
 
+	def record_imported_host(self, identifiers):
+		normalized = set()
+
+		if identifiers is None:
+			return
+
+		for identifier in identifiers:
+			key = self.normalize_host_identifier(identifier)
+			if key:
+				normalized.add(key)
+
+		if not normalized:
+			return
+
+		groups_to_merge = []
+
+		for group in self.imported_host_groups:
+			if normalized & group:
+				groups_to_merge.append(group)
+
+		if groups_to_merge:
+			target_group = groups_to_merge[0]
+			for other_group in groups_to_merge[1:]:
+				target_group.update(other_group)
+				self.imported_host_groups.remove(other_group)
+			target_group.update(normalized)
+		else:
+			self.imported_host_groups.append(set(normalized))
+
+	def get_imported_host_groups(self):
+		return [frozenset(group) for group in self.imported_host_groups if group]
+
 	def get_imported_services(self, target):
 		keys = []
+		seen_keys = set()
+
+		def add_identifier(identifier):
+			key = self.normalize_host_identifier(identifier)
+			if key and key not in seen_keys:
+				keys.append(key)
+				seen_keys.add(key)
 
 		if target.address:
-			keys.append(target.address)
+			add_identifier(target.address)
 
 		if target.ip and target.ip != target.address:
-			keys.append(target.ip)
+			add_identifier(target.ip)
 
 		if target.type == 'hostname':
-			keys.append(target.address.lower())
+			add_identifier(target.address.lower())
+
+		if hasattr(target, 'imported_identifiers'):
+			for identifier in target.imported_identifiers:
+				add_identifier(identifier)
 
 		services = []
 		seen = set()
 
-		for identifier in keys:
-			key = self.normalize_host_identifier(identifier)
-			if key is None:
-				continue
-
+		for key in keys:
 			if key not in self.imported_services:
 				continue
 

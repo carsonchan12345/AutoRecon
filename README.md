@@ -296,13 +296,15 @@ AutoRecon can skip its initial port-scanning phase when you already have Nmap
 output available. Supply one or more existing Nmap result files with
 `--nmap-import` or point `--nmap-import-dir` at a directory that contains your
 saved scans, and AutoRecon will queue service enumeration directly from that
-data instead of launching fresh Nmap runs.
+data instead of launching fresh Nmap runs. When you omit explicit targets from
+the command line (or `--target-file`), AutoRecon builds its target list from the
+host identifiers embedded in the imported results.
 
 The importer recognizes any of the standard Nmap formats, so you can mix
 results produced with `-oN`, `-oG`, or `-oX` in the same run. AutoRecon matches
-services to targets by IP address and hostname; make sure the targets you pass
-to AutoRecon (or define in `--target-file`) include the same identifiers that
-appear in the imported files.
+services to targets by IP address and hostname; when you do provide targets,
+make sure the addresses (or hostnames) you pass to AutoRecon—including via
+`--target-file`—also appear in the imported files.
 
 Example usage:
 
