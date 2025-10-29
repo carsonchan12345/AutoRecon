@@ -863,8 +863,10 @@ async def scan_target(target):
 				except asyncio.InvalidStateError:
 					pass
 
-				if task.result()['type'] == 'port':
-					for service in (task.result()['result'] or []):
+				result = task.result()
+
+				if isinstance(result, dict) and result.get('type') == 'port':
+					for service in (result.get('result') or []):
 						services.append(service)
 
 		for service in services:
