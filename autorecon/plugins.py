@@ -1,4 +1,4 @@
-import asyncio, inspect, os, re, sys
+import asyncio, inspect, ipaddress, os, re, sys
 from typing import final
 from autorecon.config import config
 from autorecon.io import slugify, info, warn, error, fail, CommandStreamReader
@@ -243,6 +243,9 @@ class AutoRecon(object):
 		self.lock = asyncio.Lock()
 		self.load_slug = None
 		self.load_module = None
+		self.imported_services = {}
+		self.use_imported_results = False
+		self.imported_host_groups = []
 
 	def add_argument(self, plugin, name, **kwargs):
 		# TODO: make sure name is simple.
@@ -375,3 +378,102 @@ class AutoRecon(object):
 		asyncio.create_task(cerr._read())
 
 		return process, cout, cerr
+
+	def normalize_host_identifier(self, identifier):
+		if identifier is None:
+			return None
+
+		identifier = identifier.strip()
+		if identifier == '':
+			return None
+
+		if identifier.startswith('[') and identifier.endswith(']'):
+			identifier = identifier[1:-1]
+
+		if '%' in identifier and ':' in identifier:
+			identifier = identifier.split('%', 1)[0]
+
+		try:
+			ip = ipaddress.ip_address(identifier)
+			return str(ip)
+		except ValueError:
+			return identifier.lower()
+
+	def add_imported_service(self, identifier, service):
+		key = self.normalize_host_identifier(identifier)
+		if key is None:
+			return
+
+		if key not in self.imported_services:
+			self.imported_services[key] = set()
+
+		self.imported_services[key].add(tuple(service))
+
+	def record_imported_host(self, identifiers):
+		normalized = set()
+
+		if identifiers is None:
+			return
+
+		for identifier in identifiers:
+			key = self.normalize_host_identifier(identifier)
+			if key:
+				normalized.add(key)
+
+		if not normalized:
+			return
+
+		groups_to_merge = []
+
+		for group in self.imported_host_groups:
+			if normalized & group:
+				groups_to_merge.append(group)
+
+		if groups_to_merge:
+			target_group = groups_to_merge[0]
+			for other_group in groups_to_merge[1:]:
+				target_group.update(other_group)
+				self.imported_host_groups.remove(other_group)
+			target_group.update(normalized)
+		else:
+			self.imported_host_groups.append(set(normalized))
+
+	def get_imported_host_groups(self):
+		return [frozenset(group) for group in self.imported_host_groups if group]
+
+	def get_imported_services(self, target):
+		keys = []
+		seen_keys = set()
+
+		def add_identifier(identifier):
+			key = self.normalize_host_identifier(identifier)
+			if key and key not in seen_keys:
+				keys.append(key)
+				seen_keys.add(key)
+
+		if target.address:
+			add_identifier(target.address)
+
+		if target.ip and target.ip != target.address:
+			add_identifier(target.ip)
+
+		if target.type == 'hostname':
+			add_identifier(target.address.lower())
+
+		if hasattr(target, 'imported_identifiers'):
+			for identifier in target.imported_identifiers:
+				add_identifier(identifier)
+
+		services = []
+		seen = set()
+
+		for key in keys:
+			if key not in self.imported_services:
+				continue
+
+			for service in self.imported_services[key]:
+				if service not in seen:
+					services.append(service)
+					seen.add(service)
+
+		return services

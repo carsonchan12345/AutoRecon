@@ -185,7 +185,8 @@ AutoRecon uses Python 3 specific functionality and does not support Python 2.
 usage: autorecon [-t TARGET_FILE] [-p PORTS] [-m MAX_SCANS] [-mp MAX_PORT_SCANS] [-c CONFIG_FILE] [-g GLOBAL_FILE] [--tags TAGS]
                  [--exclude-tags TAGS] [--port-scans PLUGINS] [--service-scans PLUGINS] [--reports PLUGINS] [--plugins-dir PLUGINS_DIR]
                  [--add-plugins-dir PLUGINS_DIR] [-l [TYPE]] [-o OUTPUT] [--single-target] [--only-scans-dir] [--no-port-dirs]
-                 [--heartbeat HEARTBEAT] [--timeout TIMEOUT] [--target-timeout TARGET_TIMEOUT] [--nmap NMAP | --nmap-append NMAP_APPEND]
+                [--heartbeat HEARTBEAT] [--timeout TIMEOUT] [--target-timeout TARGET_TIMEOUT] [--nmap-import FILE [FILE ...]]
+                [--nmap-import-dir DIR] [--nmap NMAP | --nmap-append NMAP_APPEND]
                  [--proxychains] [--disable-sanity-checks] [--disable-keyboard-control] [--force-services SERVICE [SERVICE ...]] [--accessible]
                  [-v] [--version] [--curl.path VALUE] [--dirbuster.tool {feroxbuster,gobuster,dirsearch,ffuf,dirb}]
                  [--dirbuster.wordlist VALUE [VALUE ...]] [--dirbuster.threads VALUE] [--dirbuster.ext VALUE]
@@ -245,6 +246,10 @@ optional arguments:
   --nmap NMAP           Override the {nmap_extra} variable in scans. Default: -vv --reason -Pn -T4
   --nmap-append NMAP_APPEND
                         Append to the default {nmap_extra} variable in scans. Default:
+  --nmap-import FILE [FILE ...]
+                        Use existing Nmap result files instead of running initial port scans.
+  --nmap-import-dir DIR
+                        Load all Nmap result files from the provided directory instead of running initial port scans.
   --proxychains         Use if you are running AutoRecon via proxychains. Default: False
   --disable-sanity-checks
                         Disable sanity checks that would otherwise prevent the scans from running. Default: False
@@ -283,6 +288,46 @@ global plugin arguments:
                         A wordlist of passwords, useful for bruteforcing. Default: /usr/share/seclists/Passwords/darkweb2017-top100.txt
   --global.domain VALUE
                         The domain to use (if known). Used for DNS and/or Active Directory. Default: None
+```
+
+### Importing existing Nmap results
+
+AutoRecon can skip its initial port-scanning phase when you already have Nmap
+output available. Supply one or more existing Nmap result files with
+`--nmap-import` or point `--nmap-import-dir` at a directory that contains your
+saved scans, and AutoRecon will queue service enumeration directly from that
+data instead of launching fresh Nmap runs. When you omit explicit targets from
+the command line (or `--target-file`), AutoRecon builds its target list from the
+host identifiers embedded in the imported results.
+
+The importer recognizes any of the standard Nmap formats, so you can mix
+results produced with `-oN`, `-oG`, or `-oX` in the same run. AutoRecon matches
+services to targets by IP address and hostname; when you do provide targets,
+make sure the addresses (or hostnames) you pass to AutoRecon—including via
+`--target-file`—also appear in the imported files.
+
+Example usage:
+
+```bash
+# Gather Nmap output beforehand
+nmap -sV -oN acme-http.nmap 10.10.10.10
+nmap -sV -oX acme-services.xml 10.10.10.10
+
+# Reuse those results when starting AutoRecon
+autorecon --nmap-import acme-http.nmap acme-services.xml 10.10.10.10
+
+# Or import everything from a directory of saved scans
+autorecon --nmap-import-dir ./nmap-runs 10.10.10.0/24
+```
+
+If the supplied files do not contain any open services, AutoRecon falls back to
+its configured port scans automatically.
+
+You can also preconfigure imports in `~/.config/AutoRecon/config.toml`:
+
+```toml
+nmap_import = ["/path/to/scan1.xml", "/path/to/scan2.gnmap"]
+nmap_import_dir = "/path/to/saved/nmap"
 ```
 
 ### Verbosity
