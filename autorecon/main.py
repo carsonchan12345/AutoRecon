@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import argparse, asyncio, importlib.util, inspect, ipaddress, math, os, re, select, shutil, signal, socket, sys, termios, time, traceback, tty
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 try:
@@ -91,6 +92,247 @@ def calculate_elapsed_time(start_time, short=False):
 		return ':'.join(elapsed_time)
 	else:
 		return ', '.join(elapsed_time)
+
+def normalize_imported_service_name(service_name, tunnel=None):
+	secure = False
+
+	if service_name is None:
+		service_name = 'unknown'
+
+	service_name = service_name.strip().lower()
+
+	if service_name.startswith('ssl/'):
+		service_name = service_name[4:]
+		secure = True
+	elif service_name.startswith('tls/'):
+		service_name = service_name[4:]
+		secure = True
+
+	if tunnel:
+		if tunnel.lower() in ['ssl', 'tls']:
+			secure = True
+
+	if 'ssl' in service_name or 'tls' in service_name:
+		secure = True
+
+	if service_name == '':
+		service_name = 'unknown'
+
+	return service_name, secure
+
+def extract_host_identifiers(text):
+	identifiers = set()
+
+	if text is None:
+		return identifiers
+
+	text = text.strip()
+
+	if text == '':
+		return identifiers
+
+	if '(' in text and text.endswith(')'):
+		try:
+			name_part, addr_part = text.rsplit('(', 1)
+			name = name_part.strip()
+			addr = addr_part[:-1].strip()
+			if name:
+				identifiers.add(name)
+			if addr:
+				identifiers.add(addr)
+		except ValueError:
+			identifiers.add(text)
+	else:
+			identifiers.add(text)
+
+	return set(filter(None, identifiers))
+
+def parse_nmap_normal_output(content, source):
+	seen_hosts = set()
+	current_hosts = []
+	services_added = 0
+
+	for raw_line in content.splitlines():
+		line = raw_line.strip()
+
+		if not line:
+			continue
+
+		if line.lower().startswith('nmap scan report for '):
+			host_section = raw_line.split('Nmap scan report for ', 1)[1].strip()
+			current_hosts = list(extract_host_identifiers(host_section))
+
+			for host in current_hosts:
+				key = autorecon.normalize_host_identifier(host)
+				if key:
+					seen_hosts.add(key)
+
+			continue
+
+		service = autorecon.extract_service(line, None)
+		if service and current_hosts:
+			for host in current_hosts:
+				autorecon.add_imported_service(host, (service.protocol, service.port, service.name, service.secure))
+				services_added += 1
+
+	return seen_hosts, services_added
+
+def parse_nmap_gnmap_output(content, source):
+	seen_hosts = set()
+	services_added = 0
+
+	for raw_line in content.splitlines():
+		if not raw_line.lower().startswith('host:'):
+			continue
+
+		if 'ports:' not in raw_line.lower():
+			continue
+
+		try:
+			host_part, ports_part = raw_line.split('Ports:', 1)
+		except ValueError:
+			continue
+
+		host_part = host_part[5:].strip()
+		hosts = list(extract_host_identifiers(host_part))
+
+		if not hosts:
+			continue
+
+		for host in hosts:
+			key = autorecon.normalize_host_identifier(host)
+			if key:
+				seen_hosts.add(key)
+
+		for entry in ports_part.split(','):
+			entry = entry.strip()
+
+			if not entry or entry.lower().startswith('ignored state'):
+				continue
+
+			fields = entry.split('/')
+
+			if len(fields) < 5:
+				continue
+
+			port_str, state, protocol = fields[:3]
+
+			if state.lower() != 'open':
+				continue
+
+			try:
+				port = int(port_str)
+			except ValueError:
+				continue
+
+			protocol = protocol.lower()
+			if protocol not in ['tcp', 'udp']:
+				continue
+
+			service_name = fields[4] if len(fields) > 4 else ''
+			service_name, secure = normalize_imported_service_name(service_name, None)
+
+			for host in hosts:
+				autorecon.add_imported_service(host, (protocol, port, service_name, secure))
+				services_added += 1
+
+	return seen_hosts, services_added
+
+def parse_nmap_xml_output(content, source):
+	seen_hosts = set()
+	services_added = 0
+
+	try:
+		root = ET.fromstring(content)
+	except ET.ParseError as exc:
+		warn('Failed to parse Nmap XML file "' + source + '": ' + str(exc))
+		return seen_hosts, services_added
+
+	for host in root.findall('host'):
+		status = host.find('status')
+		if status is not None and status.attrib.get('state') not in [None, 'up']:
+			continue
+
+		identifiers = set()
+
+		for address in host.findall('address'):
+			addr_type = address.attrib.get('addrtype', '').lower()
+			if addr_type in ['ipv4', 'ipv6']:
+				addr = address.attrib.get('addr')
+				if addr:
+					identifiers.add(addr)
+
+		for hostname in host.findall('hostnames/hostname'):
+			name = hostname.attrib.get('name')
+			if name:
+				identifiers.add(name)
+
+		if not identifiers:
+			continue
+
+		for identifier in identifiers:
+			key = autorecon.normalize_host_identifier(identifier)
+			if key:
+				seen_hosts.add(key)
+
+		ports = host.find('ports')
+		if ports is None:
+			continue
+
+		for port in ports.findall('port'):
+			protocol = port.attrib.get('protocol', '').lower()
+
+			if protocol not in ['tcp', 'udp']:
+				continue
+
+			portid = port.attrib.get('portid')
+
+			try:
+				port_num = int(portid)
+			except (TypeError, ValueError):
+				continue
+
+			state_element = port.find('state')
+			if state_element is None or state_element.attrib.get('state') != 'open':
+				continue
+
+			service_element = port.find('service')
+			service_name = None
+			tunnel = None
+
+			if service_element is not None:
+				service_name = service_element.attrib.get('name')
+				tunnel = service_element.attrib.get('tunnel')
+
+			service_name, secure = normalize_imported_service_name(service_name, tunnel)
+
+			for identifier in identifiers:
+				autorecon.add_imported_service(identifier, (protocol, port_num, service_name, secure))
+				services_added += 1
+
+	return seen_hosts, services_added
+
+def load_imported_nmap_file(path):
+	try:
+		with open(path, 'r', encoding='utf-8', errors='ignore') as handle:
+			content = handle.read()
+	except OSError as exc:
+		error('The Nmap results file "' + path + '" could not be read: ' + str(exc))
+		return 0, 0
+
+	lowered = content.lower()
+
+	if '<nmaprun' in lowered:
+		hosts, services = parse_nmap_xml_output(content, path)
+	elif 'nmap scan report for ' in lowered:
+		hosts, services = parse_nmap_normal_output(content, path)
+	elif re.search(r'^host:\s', content, re.IGNORECASE | re.MULTILINE):
+		hosts, services = parse_nmap_gnmap_output(content, path)
+	else:
+		warn('The file "' + path + '" does not appear to contain recognizable Nmap output.')
+		return 0, 0
+
+	return len(hosts), services
 
 # sig and frame args are only present so the function
 # works with signal.signal() and handles Ctrl-C.
@@ -536,31 +778,49 @@ async def scan_target(target):
 			autorecon.errors = True
 			return
 	else:
-		for plugin in target.autorecon.plugin_types['port']:
-			if config['proxychains'] and plugin.type == 'udp':
-				continue
+		imported_service_specs = []
 
-			if config['port_scans'] and plugin.slug in config['port_scans']:
-				matching_tags = True
-				excluded_tags = False
+		if target.autorecon.use_imported_results:
+			imported_service_specs = target.autorecon.get_imported_services(target)
+
+			if imported_service_specs:
+				info('Using imported Nmap results for {byellow}' + target.address + '{rst}', verbosity=1)
+
+				async with target.lock:
+					for protocol, port, name, secure in imported_service_specs:
+						target.pending_services.append(Service(protocol, port, name, secure))
+
+				pending.append(asyncio.create_task(asyncio.sleep(0)))
 			else:
-				plugin_tag_set = set(plugin.tags)
+				if target.autorecon.imported_services:
+					warn('No imported Nmap results matched target {byellow}' + target.address + '{rst}. Falling back to active port scans.', verbosity=1)
 
-				matching_tags = False
-				for tag_group in target.autorecon.tags:
-					if set(tag_group).issubset(plugin_tag_set):
-						matching_tags = True
-						break
+		if not imported_service_specs:
+			for plugin in target.autorecon.plugin_types['port']:
+				if config['proxychains'] and plugin.type == 'udp':
+					continue
 
-				excluded_tags = False
-				for tag_group in target.autorecon.excluded_tags:
-					if set(tag_group).issubset(plugin_tag_set):
-						excluded_tags = True
-						break
+				if config['port_scans'] and plugin.slug in config['port_scans']:
+					matching_tags = True
+					excluded_tags = False
+				else:
+					plugin_tag_set = set(plugin.tags)
 
-			if matching_tags and not excluded_tags:
-				target.scans['ports'][plugin.slug] = {'plugin':plugin, 'commands':[]}
-				pending.append(asyncio.create_task(port_scan(plugin, target)))
+					matching_tags = False
+					for tag_group in target.autorecon.tags:
+						if set(tag_group).issubset(plugin_tag_set):
+							matching_tags = True
+							break
+
+					excluded_tags = False
+					for tag_group in target.autorecon.excluded_tags:
+						if set(tag_group).issubset(plugin_tag_set):
+							excluded_tags = True
+							break
+
+				if matching_tags and not excluded_tags:
+					target.scans['ports'][plugin.slug] = {'plugin':plugin, 'commands':[]}
+					pending.append(asyncio.create_task(port_scan(plugin, target)))
 
 	async with autorecon.lock:
 		autorecon.scanning_targets.append(target)
@@ -876,6 +1136,8 @@ async def run():
 	parser.add_argument('-p', '--ports', action='store', type=str, help='Comma separated list of ports / port ranges to scan. Specify TCP/UDP ports by prepending list with T:/U: To scan both TCP/UDP, put port(s) at start or specify B: e.g. 53,T:21-25,80,U:123,B:123. Default: %(default)s')
 	parser.add_argument('-m', '--max-scans', action='store', type=int, help='The maximum number of concurrent scans to run. Default: %(default)s')
 	parser.add_argument('-mp', '--max-port-scans', action='store', type=int, help='The maximum number of concurrent port scans to run. Default: 10 (approx 20%% of max-scans unless specified)')
+	parser.add_argument('--nmap-import', action='store', nargs='+', metavar='FILE', help='Use existing Nmap result files instead of running initial port scans. Default: %(default)s')
+	parser.add_argument('--nmap-import-dir', action='store', metavar='DIR', help='Use all Nmap result files from the provided directory instead of running initial port scans. Default: %(default)s')
 	parser.add_argument('-c', '--config', action='store', type=str, default=config_file, dest='config_file', help='Location of AutoRecon\'s config file. Default: %(default)s')
 	parser.add_argument('-g', '--global-file', action='store', type=str, help='Location of AutoRecon\'s global file. Default: %(default)s')
 	parser.add_argument('--tags', action='store', type=str, default='default', help='Tags to determine which plugins should be included. Separate tags by a plus symbol (+) to group tags together. Separate groups with a comma (,) to create multiple groups. For a plugin to be included, it must have all the tags specified in at least one group. Default: %(default)s')
@@ -1375,6 +1637,41 @@ async def run():
 
 	if config['reports']:
 		config['reports'] = [x.strip().lower() for x in config['reports'].split(',')]
+	imported_nmap_files = []
+	if config['nmap_import']:
+		if isinstance(config['nmap_import'], list):
+			imported_nmap_files.extend(config['nmap_import'])
+		else:
+			imported_nmap_files.append(config['nmap_import'])
+	if config['nmap_import_dir']:
+		if os.path.isdir(config['nmap_import_dir']):
+			for entry in sorted(os.listdir(config['nmap_import_dir'])):
+				file_path = os.path.join(config['nmap_import_dir'], entry)
+				if os.path.isfile(file_path):
+					imported_nmap_files.append(file_path)
+		else:
+			error('The Nmap results directory "' + config['nmap_import_dir'] + '" does not exist.')
+			errors = True
+	autorecon.use_imported_results = bool(config['nmap_import'] or config['nmap_import_dir'])
+	processed_import_files = 0
+	if imported_nmap_files:
+		for nmap_file in imported_nmap_files:
+			if not os.path.isfile(nmap_file):
+				error('The Nmap results file "' + nmap_file + '" does not exist.')
+				errors = True
+				continue
+			processed_import_files += 1
+			hosts_in_file, services_in_file = load_imported_nmap_file(nmap_file)
+			if hosts_in_file == 0 and services_in_file == 0:
+				warn('No open services were found in Nmap results file "' + nmap_file + '".', verbosity=1)
+		if autorecon.imported_services:
+			host_identifier_count = len(autorecon.imported_services)
+			total_services = sum(len(s) for s in autorecon.imported_services.values())
+			info('Imported Nmap results for ' + str(host_identifier_count) + ' host identifier' + ('s' if host_identifier_count != 1 else '') + ' covering ' + str(total_services) + ' open service' + ('s' if total_services != 1 else '') + '.', verbosity=1)
+		elif processed_import_files > 0:
+			warn('The supplied Nmap results did not contain any usable open services. AutoRecon will run its standard port scans.', verbosity=1)
+	elif autorecon.use_imported_results:
+		warn('No Nmap result files were found to import. AutoRecon will run its standard port scans.', verbosity=1)
 
 	raw_targets = args.targets
 
@@ -1520,8 +1817,11 @@ async def run():
 				port_scan_plugin_count += 1
 
 		if port_scan_plugin_count == 0:
-			error('There are no port scan plugins that match the tags specified.')
-			errors = True
+			if autorecon.use_imported_results and autorecon.imported_services:
+				port_scan_plugin_count = 1
+			else:
+				error('There are no port scan plugins that match the tags specified.')
+				errors = True
 	else:
 		port_scan_plugin_count = config['max_port_scans'] / 5
 

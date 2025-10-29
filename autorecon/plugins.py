@@ -1,4 +1,4 @@
-import asyncio, inspect, os, re, sys
+import asyncio, inspect, ipaddress, os, re, sys
 from typing import final
 from autorecon.config import config
 from autorecon.io import slugify, info, warn, error, fail, CommandStreamReader
@@ -243,6 +243,8 @@ class AutoRecon(object):
 		self.lock = asyncio.Lock()
 		self.load_slug = None
 		self.load_module = None
+		self.imported_services = {}
+		self.use_imported_results = False
 
 	def add_argument(self, plugin, name, **kwargs):
 		# TODO: make sure name is simple.
@@ -375,3 +377,63 @@ class AutoRecon(object):
 		asyncio.create_task(cerr._read())
 
 		return process, cout, cerr
+
+	def normalize_host_identifier(self, identifier):
+		if identifier is None:
+			return None
+
+		identifier = identifier.strip()
+		if identifier == '':
+			return None
+
+		if identifier.startswith('[') and identifier.endswith(']'):
+			identifier = identifier[1:-1]
+
+		if '%' in identifier and ':' in identifier:
+			identifier = identifier.split('%', 1)[0]
+
+		try:
+			ip = ipaddress.ip_address(identifier)
+			return str(ip)
+		except ValueError:
+			return identifier.lower()
+
+	def add_imported_service(self, identifier, service):
+		key = self.normalize_host_identifier(identifier)
+		if key is None:
+			return
+
+		if key not in self.imported_services:
+			self.imported_services[key] = set()
+
+		self.imported_services[key].add(tuple(service))
+
+	def get_imported_services(self, target):
+		keys = []
+
+		if target.address:
+			keys.append(target.address)
+
+		if target.ip and target.ip != target.address:
+			keys.append(target.ip)
+
+		if target.type == 'hostname':
+			keys.append(target.address.lower())
+
+		services = []
+		seen = set()
+
+		for identifier in keys:
+			key = self.normalize_host_identifier(identifier)
+			if key is None:
+				continue
+
+			if key not in self.imported_services:
+				continue
+
+			for service in self.imported_services[key]:
+				if service not in seen:
+					services.append(service)
+					seen.add(service)
+
+		return services
