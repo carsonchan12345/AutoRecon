@@ -1154,6 +1154,7 @@ async def run():
 	parser.add_argument('--port-scans', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed PortScan plugins (comma separated). Default: %(default)s')
 	parser.add_argument('--service-scans', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed ServiceScan plugins (comma separated). Default: %(default)s')
 	parser.add_argument('--reports', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed Report plugins (comma separated). Default: %(default)s')
+	parser.add_argument('--disable-plugins', action='store', type=str, metavar='PLUGINS', help='Disable plugins by name or slug (comma separated). Default: %(default)s')
 	parser.add_argument('--plugins-dir', action='store', type=str, help='The location of the plugins directory. Default: %(default)s')
 	parser.add_argument('--add-plugins-dir', action='store', type=str, metavar='PLUGINS_DIR', help='The location of an additional plugins directory to add to the main one. Default: %(default)s')
 	parser.add_argument('-l', '--list', action='store', nargs='?', const='plugins', metavar='TYPE', help='List all plugins or plugins of a specific type. e.g. --list, --list port, --list service')
@@ -1213,6 +1214,8 @@ async def run():
 					config['plugins_dir'] = val
 				elif key == 'add-plugins-dir':
 					config['add_plugins_dir'] = val
+				elif key == 'disable-plugins':
+					config['disable_plugins'] = val
 		except toml.decoder.TomlDecodeError:
 			unknown_help()
 			fail('Error: Couldn\'t parse ' + args.config_file + ' config file. Check syntax.')
@@ -1226,6 +1229,8 @@ async def run():
 			config['plugins_dir'] = args_dict['plugins_dir']
 		elif key == 'add-plugins-dir' and args_dict['add_plugins_dir'] is not None:
 			config['add_plugins_dir'] = args_dict['add_plugins_dir']
+		elif key == 'disable-plugins' and args_dict['disable_plugins'] is not None:
+			config['disable_plugins'] = args_dict['disable_plugins']
 
 	if not config['plugins_dir']:
 		unknown_help()
@@ -1242,6 +1247,8 @@ async def run():
 	plugins_dirs = [config['plugins_dir']]
 	if config['add_plugins_dir']:
 		plugins_dirs.append(config['add_plugins_dir'])
+
+	autorecon.update_disabled_plugins(config.get('disable_plugins'))
 
 	for plugins_dir in plugins_dirs:
 		for root, dirnames, filenames in os.walk(plugins_dir):
@@ -1271,7 +1278,12 @@ async def run():
 
 						# Only add classes that are a sub class of either PortScan, ServiceScan, or Report
 						if issubclass(c, PortScan) or issubclass(c, ServiceScan) or issubclass(c, Report):
-							autorecon.register(c(), filename)
+							plugin_instance = c()
+							if autorecon.should_disable_plugin(plugin_instance):
+								plugin_instance.disabled = True
+								plugin_slug = plugin_instance.slug if plugin_instance.slug else slugify(plugin_instance.name if getattr(plugin_instance, 'name', None) else plugin_instance.__class__.__name__)
+								info('Disabling plugin {byellow}' + (plugin_instance.name or plugin_slug or plugin_instance.__class__.__name__) + '{rst}' + (f' ({plugin_slug})' if plugin_slug else ''), verbosity=1)
+							autorecon.register(plugin_instance, filename)
 						else:
 							print('Plugin "' + c.__name__ + '" in ' + filename + ' is not a subclass of either PortScan, ServiceScan, or Report.')
 				except (ImportError, SyntaxError) as ex:
@@ -1279,6 +1291,10 @@ async def run():
 					print('cannot import ' + filename + ' plugin')
 					print(ex)
 					sys.exit(1)
+
+	unmatched_disabled = autorecon.get_unmatched_disabled_plugins()
+	if unmatched_disabled:
+		warn('Unable to disable the following plugins because no matching plugin was loaded: ' + ', '.join(sorted(set(unmatched_disabled))))
 
 	for plugin in autorecon.plugins.values():
 		if plugin.slug in autorecon.taglist:
