@@ -755,7 +755,7 @@ async def scan_target(target):
 
 	target.reportdir = reportdir
 
-	pending = []
+	pending = set()
 
 	heartbeat = asyncio.create_task(start_heartbeat(target, period=config['heartbeat']))
 	# Ensure any late-created targets pick up their imported identifier groups
@@ -781,7 +781,7 @@ async def scan_target(target):
 				services.append(service)
 
 		if services:
-			pending.append(asyncio.create_task(asyncio.sleep(0)))
+			pending.add(asyncio.create_task(asyncio.sleep(0)))
 		else:
 			error('No services were defined. Please check your service syntax: [tcp|udp]/<port>/<service-name>/[secure|insecure]')
 			heartbeat.cancel()
@@ -801,7 +801,7 @@ async def scan_target(target):
 					for protocol, port, name, secure in imported_service_specs:
 						target.pending_services.append(Service(protocol, port, name, secure))
 
-				pending.append(asyncio.create_task(asyncio.sleep(0)))
+				pending.add(asyncio.create_task(asyncio.sleep(0)))
 			else:
 				imported_identifiers = getattr(target, 'imported_identifiers', None)
 				if imported_identifiers:
@@ -835,7 +835,7 @@ async def scan_target(target):
 
 				if matching_tags and not excluded_tags:
 					target.scans['ports'][plugin.slug] = {'plugin':plugin, 'commands':[]}
-					pending.append(asyncio.create_task(port_scan(plugin, target)))
+					pending.add(asyncio.create_task(port_scan(plugin, target)))
 
 	async with autorecon.lock:
 		autorecon.scanning_targets.append(target)
@@ -1939,10 +1939,10 @@ async def run():
 	if not config['disable_keyboard_control']:
 		terminal_settings = termios.tcgetattr(sys.stdin.fileno())
 
-	pending = []
+	pending = set()
 	i = 0
 	while autorecon.pending_targets:
-		pending.append(asyncio.create_task(scan_target(autorecon.pending_targets.pop(0))))
+		pending.add(asyncio.create_task(scan_target(autorecon.pending_targets.pop(0))))
 		i+=1
 		if i >= num_initial_targets:
 			break
