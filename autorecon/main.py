@@ -758,6 +758,9 @@ async def scan_target(target):
 	pending = []
 
 	heartbeat = asyncio.create_task(start_heartbeat(target, period=config['heartbeat']))
+	# Ensure any late-created targets pick up their imported identifier groups
+	# before we decide whether active port scans are required.
+	target.autorecon.assign_imported_identifiers(target)
 
 	services = []
 	if config['force_services']:
@@ -786,6 +789,7 @@ async def scan_target(target):
 			return
 	else:
 		imported_service_specs = []
+		skip_port_scans = False
 
 		if target.autorecon.use_imported_results:
 			imported_service_specs = target.autorecon.get_imported_services(target)
@@ -799,10 +803,14 @@ async def scan_target(target):
 
 				pending.append(asyncio.create_task(asyncio.sleep(0)))
 			else:
-				if target.autorecon.imported_services:
+				imported_identifiers = getattr(target, 'imported_identifiers', None)
+				if imported_identifiers:
+					warn('Imported Nmap results for {byellow}' + target.address + '{rst} reported no open services; skipping active port scans.', verbosity=1)
+					skip_port_scans = True
+				elif target.autorecon.imported_services:
 					warn('No imported Nmap results matched target {byellow}' + target.address + '{rst}. Falling back to active port scans.', verbosity=1)
 
-		if not imported_service_specs:
+		if not imported_service_specs and not skip_port_scans:
 			for plugin in target.autorecon.plugin_types['port']:
 				if config['proxychains'] and plugin.type == 'udp':
 					continue
