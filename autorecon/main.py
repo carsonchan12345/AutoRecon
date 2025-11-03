@@ -1888,10 +1888,6 @@ async def run():
 		error('You cannot provide more than one target when scanning in single-target mode.')
 		errors = True
 
-	if not args.disable_sanity_checks and len(autorecon.pending_targets) > 256:
-		error('A total of ' + str(len(autorecon.pending_targets)) + ' targets would be scanned. If this is correct, re-run with the --disable-sanity-checks option to suppress this check.')
-		errors = True
-
 	if not config['force_services']:
 		port_scan_plugin_count = 0
 		for plugin in autorecon.plugin_types['port']:
