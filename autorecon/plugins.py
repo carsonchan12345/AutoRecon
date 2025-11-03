@@ -558,3 +558,46 @@ class AutoRecon(object):
 					seen.add(service)
 
 		return services
+
+	def _find_imported_identifier_group(self, identifier):
+		key = self.normalize_host_identifier(identifier)
+
+		if not key:
+			return None
+
+		for group in self.imported_host_groups:
+			if key in group:
+				return set(group)
+
+		if key in self.imported_services:
+			return {key}
+
+		return None
+
+	def assign_imported_identifiers(self, target):
+		if target is None:
+			return
+
+		existing = getattr(target, 'imported_identifiers', None)
+
+		if existing:
+			return
+
+		candidate_identifiers = []
+
+		if getattr(target, 'address', None):
+			candidate_identifiers.append(target.address)
+
+		if getattr(target, 'ip', None) and target.ip != target.address:
+			candidate_identifiers.append(target.ip)
+
+		identifiers = set()
+
+		for candidate in candidate_identifiers:
+			group = self._find_imported_identifier_group(candidate)
+
+			if group:
+				identifiers.update(group)
+
+		if identifiers:
+			target.imported_identifiers = sorted(identifiers)

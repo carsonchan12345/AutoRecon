@@ -1737,9 +1737,13 @@ async def run():
 				continue
 
 			if isinstance(ip, ipaddress.IPv4Address):
-				autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv4', 'ip', autorecon))
+				target_obj = Target(ip_str, ip_str, 'IPv4', 'ip', autorecon)
+				autorecon.assign_imported_identifiers(target_obj)
+				autorecon.pending_targets.append(target_obj)
 			elif isinstance(ip, ipaddress.IPv6Address):
-				autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv6', 'ip', autorecon))
+				target_obj = Target(ip_str, ip_str, 'IPv6', 'ip', autorecon)
+				autorecon.assign_imported_identifiers(target_obj)
+				autorecon.pending_targets.append(target_obj)
 			else:
 				fail('This should never happen unless IPv8 is invented.')
 		except ValueError:
@@ -1762,12 +1766,16 @@ async def run():
 						if found:
 							continue
 
-						if isinstance(ip, ipaddress.IPv4Address):
-							autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv4', 'ip', autorecon))
-						elif isinstance(ip, ipaddress.IPv6Address):
-							autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv6', 'ip', autorecon))
-						else:
-							fail('This should never happen unless IPv8 is invented.')
+					if isinstance(ip, ipaddress.IPv4Address):
+						target_obj = Target(ip_str, ip_str, 'IPv4', 'ip', autorecon)
+						autorecon.assign_imported_identifiers(target_obj)
+						autorecon.pending_targets.append(target_obj)
+					elif isinstance(ip, ipaddress.IPv6Address):
+						target_obj = Target(ip_str, ip_str, 'IPv6', 'ip', autorecon)
+						autorecon.assign_imported_identifiers(target_obj)
+						autorecon.pending_targets.append(target_obj)
+					else:
+						fail('This should never happen unless IPv8 is invented.')
 
 			except ValueError:
 
@@ -1784,7 +1792,9 @@ async def run():
 					if found:
 						continue
 
-					autorecon.pending_targets.append(Target(target, ip, 'IPv4', 'hostname', autorecon))
+					target_obj = Target(target, ip, 'IPv4', 'hostname', autorecon)
+					autorecon.assign_imported_identifiers(target_obj)
+					autorecon.pending_targets.append(target_obj)
 				except socket.gaierror:
 					try:
 						addresses = socket.getaddrinfo(target, None, socket.AF_INET6)
@@ -1799,7 +1809,9 @@ async def run():
 						if found:
 							continue
 
-						autorecon.pending_targets.append(Target(target, ip, 'IPv6', 'hostname', autorecon))
+						target_obj = Target(target, ip, 'IPv6', 'hostname', autorecon)
+						autorecon.assign_imported_identifiers(target_obj)
+						autorecon.pending_targets.append(target_obj)
 					except socket.gaierror:
 						unresolvable_targets = True
 						error(target + ' does not appear to be a valid IP address, IP range, or resolvable hostname.')
