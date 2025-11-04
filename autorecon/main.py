@@ -755,9 +755,12 @@ async def scan_target(target):
 
 	target.reportdir = reportdir
 
-	pending = []
+	pending = set()
 
 	heartbeat = asyncio.create_task(start_heartbeat(target, period=config['heartbeat']))
+	# Ensure any late-created targets pick up their imported identifier groups
+	# before we decide whether active port scans are required.
+	target.autorecon.assign_imported_identifiers(target)
 
 	services = []
 	if config['force_services']:
@@ -778,7 +781,7 @@ async def scan_target(target):
 				services.append(service)
 
 		if services:
-			pending.append(asyncio.create_task(asyncio.sleep(0)))
+			pending.add(asyncio.create_task(asyncio.sleep(0)))
 		else:
 			error('No services were defined. Please check your service syntax: [tcp|udp]/<port>/<service-name>/[secure|insecure]')
 			heartbeat.cancel()
@@ -786,6 +789,7 @@ async def scan_target(target):
 			return
 	else:
 		imported_service_specs = []
+		skip_port_scans = False
 
 		if target.autorecon.use_imported_results:
 			imported_service_specs = target.autorecon.get_imported_services(target)
@@ -797,12 +801,16 @@ async def scan_target(target):
 					for protocol, port, name, secure in imported_service_specs:
 						target.pending_services.append(Service(protocol, port, name, secure))
 
-				pending.append(asyncio.create_task(asyncio.sleep(0)))
+				pending.add(asyncio.create_task(asyncio.sleep(0)))
 			else:
-				if target.autorecon.imported_services:
+				imported_identifiers = getattr(target, 'imported_identifiers', None)
+				if imported_identifiers:
+					warn('Imported Nmap results for {byellow}' + target.address + '{rst} reported no open services; skipping active port scans.', verbosity=1)
+					skip_port_scans = True
+				elif target.autorecon.imported_services:
 					warn('No imported Nmap results matched target {byellow}' + target.address + '{rst}. Falling back to active port scans.', verbosity=1)
 
-		if not imported_service_specs:
+		if not imported_service_specs and not skip_port_scans:
 			for plugin in target.autorecon.plugin_types['port']:
 				if config['proxychains'] and plugin.type == 'udp':
 					continue
@@ -827,7 +835,7 @@ async def scan_target(target):
 
 				if matching_tags and not excluded_tags:
 					target.scans['ports'][plugin.slug] = {'plugin':plugin, 'commands':[]}
-					pending.append(asyncio.create_task(port_scan(plugin, target)))
+					pending.add(asyncio.create_task(port_scan(plugin, target)))
 
 	async with autorecon.lock:
 		autorecon.scanning_targets.append(target)
@@ -1154,6 +1162,7 @@ async def run():
 	parser.add_argument('--port-scans', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed PortScan plugins (comma separated). Default: %(default)s')
 	parser.add_argument('--service-scans', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed ServiceScan plugins (comma separated). Default: %(default)s')
 	parser.add_argument('--reports', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed Report plugins (comma separated). Default: %(default)s')
+	parser.add_argument('--disable-plugins', action='store', type=str, metavar='PLUGINS', help='Disable plugins by name or slug (comma separated). Default: %(default)s')
 	parser.add_argument('--plugins-dir', action='store', type=str, help='The location of the plugins directory. Default: %(default)s')
 	parser.add_argument('--add-plugins-dir', action='store', type=str, metavar='PLUGINS_DIR', help='The location of an additional plugins directory to add to the main one. Default: %(default)s')
 	parser.add_argument('-l', '--list', action='store', nargs='?', const='plugins', metavar='TYPE', help='List all plugins or plugins of a specific type. e.g. --list, --list port, --list service')
@@ -1213,6 +1222,8 @@ async def run():
 					config['plugins_dir'] = val
 				elif key == 'add-plugins-dir':
 					config['add_plugins_dir'] = val
+				elif key == 'disable-plugins':
+					config['disable_plugins'] = val
 		except toml.decoder.TomlDecodeError:
 			unknown_help()
 			fail('Error: Couldn\'t parse ' + args.config_file + ' config file. Check syntax.')
@@ -1226,6 +1237,8 @@ async def run():
 			config['plugins_dir'] = args_dict['plugins_dir']
 		elif key == 'add-plugins-dir' and args_dict['add_plugins_dir'] is not None:
 			config['add_plugins_dir'] = args_dict['add_plugins_dir']
+		elif key == 'disable-plugins' and args_dict['disable_plugins'] is not None:
+			config['disable_plugins'] = args_dict['disable_plugins']
 
 	if not config['plugins_dir']:
 		unknown_help()
@@ -1242,6 +1255,8 @@ async def run():
 	plugins_dirs = [config['plugins_dir']]
 	if config['add_plugins_dir']:
 		plugins_dirs.append(config['add_plugins_dir'])
+
+	autorecon.update_disabled_plugins(config.get('disable_plugins'))
 
 	for plugins_dir in plugins_dirs:
 		for root, dirnames, filenames in os.walk(plugins_dir):
@@ -1271,7 +1286,12 @@ async def run():
 
 						# Only add classes that are a sub class of either PortScan, ServiceScan, or Report
 						if issubclass(c, PortScan) or issubclass(c, ServiceScan) or issubclass(c, Report):
-							autorecon.register(c(), filename)
+							plugin_instance = c()
+							if autorecon.should_disable_plugin(plugin_instance):
+								plugin_instance.disabled = True
+								plugin_slug = plugin_instance.slug if plugin_instance.slug else slugify(plugin_instance.name if getattr(plugin_instance, 'name', None) else plugin_instance.__class__.__name__)
+								info('Disabling plugin {byellow}' + (plugin_instance.name or plugin_slug or plugin_instance.__class__.__name__) + '{rst}' + (f' ({plugin_slug})' if plugin_slug else ''), verbosity=1)
+							autorecon.register(plugin_instance, filename)
 						else:
 							print('Plugin "' + c.__name__ + '" in ' + filename + ' is not a subclass of either PortScan, ServiceScan, or Report.')
 				except (ImportError, SyntaxError) as ex:
@@ -1279,6 +1299,10 @@ async def run():
 					print('cannot import ' + filename + ' plugin')
 					print(ex)
 					sys.exit(1)
+
+	unmatched_disabled = autorecon.get_unmatched_disabled_plugins()
+	if unmatched_disabled:
+		warn('Unable to disable the following plugins because no matching plugin was loaded: ' + ', '.join(sorted(set(unmatched_disabled))))
 
 	for plugin in autorecon.plugins.values():
 		if plugin.slug in autorecon.taglist:
@@ -1721,9 +1745,13 @@ async def run():
 				continue
 
 			if isinstance(ip, ipaddress.IPv4Address):
-				autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv4', 'ip', autorecon))
+				target_obj = Target(ip_str, ip_str, 'IPv4', 'ip', autorecon)
+				autorecon.assign_imported_identifiers(target_obj)
+				autorecon.pending_targets.append(target_obj)
 			elif isinstance(ip, ipaddress.IPv6Address):
-				autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv6', 'ip', autorecon))
+				target_obj = Target(ip_str, ip_str, 'IPv6', 'ip', autorecon)
+				autorecon.assign_imported_identifiers(target_obj)
+				autorecon.pending_targets.append(target_obj)
 			else:
 				fail('This should never happen unless IPv8 is invented.')
 		except ValueError:
@@ -1746,12 +1774,16 @@ async def run():
 						if found:
 							continue
 
-						if isinstance(ip, ipaddress.IPv4Address):
-							autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv4', 'ip', autorecon))
-						elif isinstance(ip, ipaddress.IPv6Address):
-							autorecon.pending_targets.append(Target(ip_str, ip_str, 'IPv6', 'ip', autorecon))
-						else:
-							fail('This should never happen unless IPv8 is invented.')
+					if isinstance(ip, ipaddress.IPv4Address):
+						target_obj = Target(ip_str, ip_str, 'IPv4', 'ip', autorecon)
+						autorecon.assign_imported_identifiers(target_obj)
+						autorecon.pending_targets.append(target_obj)
+					elif isinstance(ip, ipaddress.IPv6Address):
+						target_obj = Target(ip_str, ip_str, 'IPv6', 'ip', autorecon)
+						autorecon.assign_imported_identifiers(target_obj)
+						autorecon.pending_targets.append(target_obj)
+					else:
+						fail('This should never happen unless IPv8 is invented.')
 
 			except ValueError:
 
@@ -1768,7 +1800,9 @@ async def run():
 					if found:
 						continue
 
-					autorecon.pending_targets.append(Target(target, ip, 'IPv4', 'hostname', autorecon))
+					target_obj = Target(target, ip, 'IPv4', 'hostname', autorecon)
+					autorecon.assign_imported_identifiers(target_obj)
+					autorecon.pending_targets.append(target_obj)
 				except socket.gaierror:
 					try:
 						addresses = socket.getaddrinfo(target, None, socket.AF_INET6)
@@ -1783,7 +1817,9 @@ async def run():
 						if found:
 							continue
 
-						autorecon.pending_targets.append(Target(target, ip, 'IPv6', 'hostname', autorecon))
+						target_obj = Target(target, ip, 'IPv6', 'hostname', autorecon)
+						autorecon.assign_imported_identifiers(target_obj)
+						autorecon.pending_targets.append(target_obj)
 					except socket.gaierror:
 						unresolvable_targets = True
 						error(target + ' does not appear to be a valid IP address, IP range, or resolvable hostname.')
@@ -1860,10 +1896,6 @@ async def run():
 		error('You cannot provide more than one target when scanning in single-target mode.')
 		errors = True
 
-	if not args.disable_sanity_checks and len(autorecon.pending_targets) > 256:
-		error('A total of ' + str(len(autorecon.pending_targets)) + ' targets would be scanned. If this is correct, re-run with the --disable-sanity-checks option to suppress this check.')
-		errors = True
-
 	if not config['force_services']:
 		port_scan_plugin_count = 0
 		for plugin in autorecon.plugin_types['port']:
@@ -1907,10 +1939,10 @@ async def run():
 	if not config['disable_keyboard_control']:
 		terminal_settings = termios.tcgetattr(sys.stdin.fileno())
 
-	pending = []
+	pending = set()
 	i = 0
 	while autorecon.pending_targets:
-		pending.append(asyncio.create_task(scan_target(autorecon.pending_targets.pop(0))))
+		pending.add(asyncio.create_task(scan_target(autorecon.pending_targets.pop(0))))
 		i+=1
 		if i >= num_initial_targets:
 			break
