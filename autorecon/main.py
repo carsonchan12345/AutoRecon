@@ -1322,8 +1322,14 @@ async def run():
 		plugin.tags += [plugin.slug]
 
 	if len(autorecon.plugin_types['port']) == 0:
-		unknown_help()
-		fail('Error: There are no valid PortScan plugins in the plugins directory "' + config['plugins_dir'] + '".')
+		if autorecon.enabled_only_plugin_entries and (autorecon.plugin_types['service'] or autorecon.plugin_types['report']):
+			warn('No PortScan plugins matched --enable-only-plugin filter; continuing without active port scans.', verbosity=1)
+		else:
+			unknown_help()
+			if autorecon.enabled_only_plugin_entries:
+				fail('Error: No plugins matched the provided --enable-only-plugin filter.')
+			else:
+				fail('Error: There are no valid PortScan plugins in the plugins directory "' + config['plugins_dir'] + '".')
 
 	# Sort plugins by priority.
 	autorecon.plugin_types['port'].sort(key=lambda x: x.priority)
