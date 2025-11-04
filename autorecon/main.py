@@ -1163,6 +1163,7 @@ async def run():
 	parser.add_argument('--service-scans', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed ServiceScan plugins (comma separated). Default: %(default)s')
 	parser.add_argument('--reports', action='store', type=str, metavar='PLUGINS', help='Override --tags / --exclude-tags for the listed Report plugins (comma separated). Default: %(default)s')
 	parser.add_argument('--disable-plugins', action='store', type=str, metavar='PLUGINS', help='Disable plugins by name or slug (comma separated). Default: %(default)s')
+	parser.add_argument('--enable-only-plugin', action='store', type=str, metavar='PLUGIN', help='Only enable the specified plugin by name or slug. Default: %(default)s')
 	parser.add_argument('--plugins-dir', action='store', type=str, help='The location of the plugins directory. Default: %(default)s')
 	parser.add_argument('--add-plugins-dir', action='store', type=str, metavar='PLUGINS_DIR', help='The location of an additional plugins directory to add to the main one. Default: %(default)s')
 	parser.add_argument('-l', '--list', action='store', nargs='?', const='plugins', metavar='TYPE', help='List all plugins or plugins of a specific type. e.g. --list, --list port, --list service')
@@ -1224,6 +1225,8 @@ async def run():
 					config['add_plugins_dir'] = val
 				elif key == 'disable-plugins':
 					config['disable_plugins'] = val
+				elif key == 'enable-only-plugin':
+					config['enable_only_plugin'] = val
 		except toml.decoder.TomlDecodeError:
 			unknown_help()
 			fail('Error: Couldn\'t parse ' + args.config_file + ' config file. Check syntax.')
@@ -1239,6 +1242,8 @@ async def run():
 			config['add_plugins_dir'] = args_dict['add_plugins_dir']
 		elif key == 'disable-plugins' and args_dict['disable_plugins'] is not None:
 			config['disable_plugins'] = args_dict['disable_plugins']
+		elif key == 'enable-only-plugin' and args_dict['enable_only_plugin'] is not None:
+			config['enable_only_plugin'] = args_dict['enable_only_plugin']
 
 	if not config['plugins_dir']:
 		unknown_help()
@@ -1257,6 +1262,7 @@ async def run():
 		plugins_dirs.append(config['add_plugins_dir'])
 
 	autorecon.update_disabled_plugins(config.get('disable_plugins'))
+	autorecon.update_enabled_only_plugins(config.get('enable_only_plugin'))
 
 	for plugins_dir in plugins_dirs:
 		for root, dirnames, filenames in os.walk(plugins_dir):
@@ -1303,6 +1309,10 @@ async def run():
 	unmatched_disabled = autorecon.get_unmatched_disabled_plugins()
 	if unmatched_disabled:
 		warn('Unable to disable the following plugins because no matching plugin was loaded: ' + ', '.join(sorted(set(unmatched_disabled))))
+
+	unmatched_enabled_only = autorecon.get_unmatched_enabled_only_plugins()
+	if unmatched_enabled_only:
+		warn('Unable to enable the following plugins because no matching plugin was loaded: ' + ', '.join(sorted(set(unmatched_enabled_only))))
 
 	for plugin in autorecon.plugins.values():
 		if plugin.slug in autorecon.taglist:
