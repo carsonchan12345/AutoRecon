@@ -177,13 +177,18 @@ Assuming you did not modify any of the content in the AutoRecon directory, this 
 
 A plugin update process is in the works. Until then, after upgrading, remove the ~/.local/share/AutoRecon directory and run AutoRecon with any argument to repopulate with the latest files.
 
+To fine-tune which scans run without modifying configuration files, use the runtime filtering flags. `--disable-plugins` accepts
+a comma-separated list of plugin names or slugs to skip. `--enable-only-plugin` limits execution to a single plugin by name or
+slug.
+
 ## Usage
 
 AutoRecon uses Python 3 specific functionality and does not support Python 2.
 
 ```
 usage: autorecon [-t TARGET_FILE] [-p PORTS] [-m MAX_SCANS] [-mp MAX_PORT_SCANS] [-c CONFIG_FILE] [-g GLOBAL_FILE] [--tags TAGS]
-                 [--exclude-tags TAGS] [--port-scans PLUGINS] [--service-scans PLUGINS] [--reports PLUGINS] [--plugins-dir PLUGINS_DIR]
+                 [--exclude-tags TAGS] [--port-scans PLUGINS] [--service-scans PLUGINS] [--reports PLUGINS]
+                 [--disable-plugins PLUGINS] [--enable-only-plugin PLUGIN] [--plugins-dir PLUGINS_DIR]
                  [--add-plugins-dir PLUGINS_DIR] [-l [TYPE]] [-o OUTPUT] [--single-target] [--only-scans-dir] [--no-port-dirs]
                 [--heartbeat HEARTBEAT] [--timeout TIMEOUT] [--target-timeout TARGET_TIMEOUT] [--nmap-import FILE [FILE ...]]
                 [--nmap-import-dir DIR] [--nmap NMAP | --nmap-append NMAP_APPEND]
@@ -223,6 +228,10 @@ optional arguments:
   --service-scans PLUGINS
                         Override --tags / --exclude-tags for the listed ServiceScan plugins (comma separated). Default: None
   --reports PLUGINS     Override --tags / --exclude-tags for the listed Report plugins (comma separated). Default: None
+  --disable-plugins PLUGINS
+                        Disable plugins by name or slug (comma separated). Default: None
+  --enable-only-plugin PLUGIN
+                        Only enable the specified plugin by name or slug. Default: None
   --plugins-dir PLUGINS_DIR
                         The location of the plugins directory. Default: ~/.local/share/AutoRecon/plugins
   --add-plugins-dir PLUGINS_DIR
