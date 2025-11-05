@@ -250,6 +250,10 @@ class AutoRecon(object):
 		self.disabled_plugin_name_map = {}
 		self.disabled_plugin_slug_map = {}
 		self.remaining_disabled_plugin_indices = set()
+		self.enabled_only_plugin_entries = []
+		self.enabled_only_plugin_name_map = {}
+		self.enabled_only_plugin_slug_map = {}
+		self.remaining_enabled_only_plugin_indices = set()
 
 	def add_argument(self, plugin, name, **kwargs):
 		# TODO: make sure name is simple.
@@ -302,15 +306,81 @@ class AutoRecon(object):
 
 			index += 1
 
+	def update_enabled_only_plugins(self, entries):
+		self.enabled_only_plugin_entries = []
+		self.enabled_only_plugin_name_map = {}
+		self.enabled_only_plugin_slug_map = {}
+		self.remaining_enabled_only_plugin_indices = set()
+
+		if entries is None:
+			return
+
+		if isinstance(entries, str):
+			raw_entries = [item.strip() for item in entries.split(',')]
+		elif isinstance(entries, (list, tuple, set)):
+			raw_entries = []
+			for item in entries:
+				if item is None:
+					continue
+				raw_entries.append(str(item).strip())
+		else:
+			raw_entries = [str(entries).strip()]
+
+		index = 0
+		for raw in raw_entries:
+			if not raw:
+				continue
+
+			name_key = raw.lower()
+			slug_key = slugify(raw)
+
+			self.enabled_only_plugin_entries.append({'raw': raw, 'name': name_key, 'slug': slug_key})
+			self.remaining_enabled_only_plugin_indices.add(index)
+
+			if name_key:
+				if name_key not in self.enabled_only_plugin_name_map:
+					self.enabled_only_plugin_name_map[name_key] = set()
+				self.enabled_only_plugin_name_map[name_key].add(index)
+
+			if slug_key:
+				if slug_key not in self.enabled_only_plugin_slug_map:
+					self.enabled_only_plugin_slug_map[slug_key] = set()
+				self.enabled_only_plugin_slug_map[slug_key].add(index)
+
+			index += 1
+
 	def should_disable_plugin(self, plugin):
-		if not self.disabled_plugin_entries:
+		if self.disabled_plugin_entries:
+			matches = set()
+
+			plugin_name = getattr(plugin, 'name', None)
+			if plugin_name:
+				matches.update(self.disabled_plugin_name_map.get(plugin_name.lower(), set()))
+
+			slug_candidates = []
+			plugin_slug = getattr(plugin, 'slug', None)
+			if plugin_slug:
+				slug_candidates.append(plugin_slug)
+			if plugin_name:
+				slug_candidates.append(slugify(plugin_name))
+			slug_candidates.append(slugify(plugin.__class__.__name__))
+
+			for slug_candidate in slug_candidates:
+				if slug_candidate:
+					matches.update(self.disabled_plugin_slug_map.get(slug_candidate, set()))
+
+			if matches:
+				self.remaining_disabled_plugin_indices.difference_update(matches)
+				return True
+
+		if not self.enabled_only_plugin_entries:
 			return False
 
 		matches = set()
 
 		plugin_name = getattr(plugin, 'name', None)
 		if plugin_name:
-			matches.update(self.disabled_plugin_name_map.get(plugin_name.lower(), set()))
+			matches.update(self.enabled_only_plugin_name_map.get(plugin_name.lower(), set()))
 
 		slug_candidates = []
 		plugin_slug = getattr(plugin, 'slug', None)
@@ -322,19 +392,25 @@ class AutoRecon(object):
 
 		for slug_candidate in slug_candidates:
 			if slug_candidate:
-				matches.update(self.disabled_plugin_slug_map.get(slug_candidate, set()))
+				matches.update(self.enabled_only_plugin_slug_map.get(slug_candidate, set()))
 
 		if matches:
-			self.remaining_disabled_plugin_indices.difference_update(matches)
-			return True
+			self.remaining_enabled_only_plugin_indices.difference_update(matches)
+			return False
 
-		return False
+		return True
 
 	def get_unmatched_disabled_plugins(self):
 		if not self.remaining_disabled_plugin_indices:
 			return []
 
 		return [self.disabled_plugin_entries[i]['raw'] for i in sorted(self.remaining_disabled_plugin_indices)]
+
+	def get_unmatched_enabled_only_plugins(self):
+		if not self.remaining_enabled_only_plugin_indices:
+			return []
+
+		return [self.enabled_only_plugin_entries[i]['raw'] for i in sorted(self.remaining_enabled_only_plugin_indices)]
 
 	def extract_service(self, line, regex):
 		if regex is None:
