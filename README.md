@@ -35,7 +35,7 @@ AutoRecon was inspired by three tools which the author used during the OSCP labs
 
 ## Nuclei template coverage
 
-AutoRecon already performs MS-RPC null-session enumeration via its RPC plugins (for example `autorecon/default-plugins/rpc/get-arch.py`, `autorecon/default-plugins/rpc/rpcdump.py`, and `autorecon/default-plugins/rpc/rpcclient.py`). The upstream [projectdiscovery/nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) repository does not currently include an rpcclient/Impacket-based MS-RPC enumeration template, so AutoRecon fills that gap without any additional configuration.
+AutoRecon already performs MS-RPC null-session enumeration via its RPC plugins (for example `autorecon/default-plugins/rpc/get-arch.py`, `autorecon/default-plugins/rpc/rpcdump.py`, and `autorecon/default-plugins/rpc/rpcclient.py`). The upstream [projectdiscovery/nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) repository does not currently include an rpcclient/Impacket-based MS-RPC enumeration template. AutoRecon fills that gap without any additional configuration.
 
 ## Installation
 
