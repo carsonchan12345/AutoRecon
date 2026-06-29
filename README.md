@@ -33,6 +33,10 @@ AutoRecon was inspired by three tools which the author used during the OSCP labs
 * Four levels of verbosity, controllable by command-line options, and during scans using Up/Down arrows.
 * Colorized output for distinguishing separate pieces of information. Can be turned off for accessibility reasons.
 
+## Nuclei template coverage
+
+AutoRecon already performs MS-RPC null-session enumeration via its RPC plugins (for example `autorecon/default-plugins/rpc/get-arch.py`, `autorecon/default-plugins/rpc/rpcdump.py`, and `autorecon/default-plugins/rpc/rpcclient.py`). The upstream [projectdiscovery/nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) repository does not currently include an rpcclient/Impacket-based MS-RPC enumeration template. AutoRecon fills that gap without any additional configuration, so keeping the RPC plugins enabled preserves this MS-RPC coverage even when you also run Nuclei templates.
+
 ## Installation
 
 There are three ways to install AutoRecon: pipx, pip, and manually. Before installation using any of these methods, certain requirements need to be fulfilled. If you have not refreshed your apt cache recently, run the following command so you are installing the latest available packages:
