@@ -20,6 +20,42 @@ from autorecon.targets import Target, Service
 
 VERSION = "2.0.36"
 
+OBSOLETE_DEFAULT_PLUGINS = [
+	{
+		'path': os.path.join('http', 'hostname-discovery.py'),
+		'required_markers': [
+			"class RedirectHostnameDiscovery",
+			"self.name = 'Redirect Hostname Discovery'",
+			"self.slug = 'redirect-host-discovery'",
+		],
+	},
+]
+
+def remove_obsolete_default_plugins():
+	plugins_dir = os.path.join(config['data_dir'], 'plugins')
+
+	for obsolete_plugin in OBSOLETE_DEFAULT_PLUGINS:
+		filepath = os.path.join(plugins_dir, obsolete_plugin['path'])
+		if not os.path.isfile(filepath):
+			continue
+
+		try:
+			with open(filepath, 'r') as plugin_file:
+				plugin_contents = plugin_file.read()
+		except OSError as ex:
+			warn('Could not inspect obsolete default plugin "' + filepath + '": ' + str(ex))
+			continue
+
+		if not all(marker in plugin_contents for marker in obsolete_plugin['required_markers']):
+			warn('Skipping obsolete default plugin cleanup for "' + filepath + '" because it appears to have been modified.')
+			continue
+
+		try:
+			os.remove(filepath)
+			warn('Removed obsolete default plugin "' + filepath + '".')
+		except OSError as ex:
+			warn('Could not remove obsolete default plugin "' + filepath + '": ' + str(ex))
+
 if not os.path.exists(config['config_dir']):
 	shutil.rmtree(config['config_dir'], ignore_errors=True, onerror=None)
 	os.makedirs(config['config_dir'], exist_ok=True)
@@ -49,6 +85,7 @@ else:
 	if not os.path.exists(os.path.join(config['data_dir'], 'VERSION-' + VERSION)):
 		warn('It looks like the plugins in ' + config['data_dir'] + ' are outdated. Please remove the ' + config['data_dir'] + ' directory and re-run AutoRecon to rebuild them.')
 
+remove_obsolete_default_plugins()
 
 # Saves current terminal settings so we can restore them.
 terminal_settings = None
