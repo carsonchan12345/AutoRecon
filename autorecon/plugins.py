@@ -526,7 +526,8 @@ class AutoRecon(object):
 			cmd,
 			stdin=open('/dev/null'),
 			stdout=asyncio.subprocess.PIPE,
-			stderr=asyncio.subprocess.PIPE)
+			stderr=asyncio.subprocess.PIPE,
+			limit=1024 * 1024)
 
 		cout = CommandStreamReader(process.stdout, target, tag, patterns=combined_patterns, outfile=outfile)
 		cerr = CommandStreamReader(process.stderr, target, tag, patterns=combined_patterns, outfile=errfile)
