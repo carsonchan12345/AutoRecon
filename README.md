@@ -75,7 +75,6 @@ gobuster
 impacket-scripts
 ike-scan
 nbtscan
-nikto
 nmap
 onesixtyone
 oscanner
@@ -93,7 +92,7 @@ katana
 On Kali Linux, you can ensure these are all installed using the following commands:
 
 ```bash
-sudo apt install seclists curl dnsrecon enum4linux feroxbuster gobuster impacket-scripts ike-scan nbtscan nikto nmap onesixtyone oscanner redis-tools smbclient smbmap snmp sslscan sipvicious tnscmd10g whatweb katana
+sudo apt install seclists curl dnsrecon enum4linux feroxbuster gobuster impacket-scripts ike-scan nbtscan nmap onesixtyone oscanner redis-tools smbclient smbmap snmp sslscan sipvicious tnscmd10g whatweb katana
 ```
 
 ### Installation Method #1: pipx (Recommended)
