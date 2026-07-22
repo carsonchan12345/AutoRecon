@@ -48,7 +48,7 @@ class DirBuster(ServiceScan):
 				await service.execute('feroxbuster -u {http_scheme}://{addressv6}:{port}/ -t ' + str(self.get_option('threads')) + ' -w ' + wordlist + ' -x "' + self.get_option('ext') + '" -k ' + ('' if self.get_option('recursive') else '-n ')  + '-q -e -r -o "{scandir}/{protocol}_{port}_{http_scheme}_feroxbuster_' + name + '.txt"' + (' ' + self.get_option('extras') if self.get_option('extras') else ''))
 
 			elif self.get_option('tool') == 'gobuster':
-				await service.execute('gobuster dir -u {http_scheme}://{addressv6}:{port}/ -t ' + str(self.get_option('threads')) + ' -w ' + wordlist + ' -e -k -x "' + self.get_option('ext') + '" -z -r -o "{scandir}/{protocol}_{port}_{http_scheme}_gobuster_' + name + '.txt"' + (' ' + self.get_option('extras') if self.get_option('extras') else ''))
+				await service.execute('gobuster dir -u {http_scheme}://{addressv6}:{port}/ -t ' + str(self.get_option('threads')) + ' -w ' + wordlist + ' -e -k -x "' + self.get_option('ext') + '" -r -o "{scandir}/{protocol}_{port}_{http_scheme}_gobuster_' + name + '.txt"' + (' ' + self.get_option('extras') if self.get_option('extras') else ''))
 
 			elif self.get_option('tool') == 'dirsearch':
 				if service.target.ipversion == 'IPv6':
