@@ -35,6 +35,7 @@ configurable_keys = [
 	'max_plugin_target_instances',
 	'max_plugin_global_instances',
 	'accessible',
+	'only_new_ports',
 	'verbose'
 ]
 
@@ -45,7 +46,8 @@ configurable_boolean_keys = [
 	'proxychains',
 	'disable_sanity_checks',
 	'ignore_plugin_checks',
-	'accessible'
+	'accessible',
+	'only_new_ports'
 ]
 
 config = {
@@ -85,5 +87,6 @@ config = {
 	'max_plugin_target_instances': None,
 	'max_plugin_global_instances': None,
 	'accessible': False,
+	'only_new_ports': False,
 	'verbose': 0
 }

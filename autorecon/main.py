@@ -552,6 +552,55 @@ async def get_semaphore(autorecon):
 			break
 	return semaphore
 
+def _expand_port_strings(port_strings):
+	"""Expand a list of nmap-style port strings (e.g. '80', '21-25') into a set of ints."""
+	ports = set()
+	for entry in port_strings or []:
+		match = re.search(r'^(\d+)\-(\d+)$', entry)
+		if match:
+			lo, hi = int(match.group(1)), int(match.group(2))
+			if lo > hi:
+				lo, hi = hi, lo
+			ports.update(range(lo, hi + 1))
+		else:
+			match = re.search(r'^(\d+)$', entry)
+			if match:
+				ports.add(int(match.group(1)))
+	return ports
+
+def get_allowed_ports():
+	"""Return {'tcp': set or None, 'udp': set or None} based on config['ports'].
+	None means 'no restriction' for that protocol."""
+	ports = config['ports']
+	if not ports:
+		return {'tcp': None, 'udp': None}
+	if isinstance(ports, str):
+		# --ports was not yet parsed into a dict; nothing to restrict by here.
+		return {'tcp': None, 'udp': None}
+	return {
+		'tcp': _expand_port_strings(ports.get('tcp')) or None,
+		'udp': _expand_port_strings(ports.get('udp')) or None,
+	}
+
+def get_scanned_ports(target):
+	"""Return a set of (protocol, port) tuples for ports already scanned, detected by
+	existing scans/<protocol><port> directories in the target's output dir."""
+	scanned = set()
+	if not target.scandir or not os.path.isdir(target.scandir):
+		return scanned
+	try:
+		entries = os.listdir(target.scandir)
+	except OSError:
+		return scanned
+	for entry in entries:
+		full = os.path.join(target.scandir, entry)
+		if not os.path.isdir(full):
+			continue
+		match = re.match(r'^(tcp|udp)(\d+)$', entry, re.IGNORECASE)
+		if match:
+			scanned.add((match.group(1).lower(), int(match.group(2))))
+	return scanned
+
 async def port_scan(plugin, target):
 	if config['ports']:
 		if config['ports']['tcp'] or config['ports']['udp']:
@@ -834,11 +883,45 @@ async def scan_target(target):
 			if imported_service_specs:
 				info('Using imported Nmap results for {byellow}' + target.address + '{rst}', verbosity=1)
 
-				async with target.lock:
-					for protocol, port, name, secure in imported_service_specs:
-						target.pending_services.append(Service(protocol, port, name, secure))
+				# Feature 1: filter imported services by the --ports whitelist so that
+				# --ports is honored even when services are imported via --nmap-import.
+				allowed = get_allowed_ports()
 
-				pending.add(asyncio.create_task(asyncio.sleep(0)))
+				# Feature 2: when --only-new-ports is set, drop imported services for ports
+				# that were already scanned (detected by existing scans/<proto><port> dirs).
+				already_scanned = get_scanned_ports(target) if config['only_new_ports'] else set()
+
+				filtered_services = []
+				skipped_whitelist = 0
+				skipped_scanned = 0
+				for protocol, port, name, secure in imported_service_specs:
+					proto = protocol.lower()
+					# Whitelist filter (--ports).
+					allowed_proto = allowed.get(proto)
+					if allowed_proto is not None and port not in allowed_proto:
+						skipped_whitelist += 1
+						continue
+					# Already-scanned filter (--only-new-ports).
+					if (proto, int(port)) in already_scanned:
+						skipped_scanned += 1
+						continue
+					filtered_services.append((protocol, port, name, secure))
+
+				if skipped_whitelist > 0:
+					info('Dropped {byellow}' + str(skipped_whitelist) + '{rst} imported service(s) not matching the --ports whitelist for {byellow}' + target.address + '{rst}', verbosity=1)
+				if skipped_scanned > 0:
+					info('Skipping {byellow}' + str(skipped_scanned) + '{rst} already-scanned port(s) for {byellow}' + target.address + '{rst} due to --only-new-ports', verbosity=1)
+
+				if filtered_services:
+					async with target.lock:
+						for protocol, port, name, secure in filtered_services:
+							target.pending_services.append(Service(protocol, port, name, secure))
+
+					pending.add(asyncio.create_task(asyncio.sleep(0)))
+				else:
+					if config['only_new_ports'] and already_scanned:
+						info('All imported services for {byellow}' + target.address + '{rst} were already scanned; nothing new to enumerate.', verbosity=1)
+					skip_port_scans = True
 			else:
 				imported_identifiers = getattr(target, 'imported_identifiers', None)
 				if imported_identifiers:
@@ -846,6 +929,14 @@ async def scan_target(target):
 					skip_port_scans = True
 				elif target.autorecon.imported_services:
 					warn('No imported Nmap results matched target {byellow}' + target.address + '{rst}. Falling back to active port scans.', verbosity=1)
+
+		# When --only-new-ports is set without nmap-import, skip active port scanning for
+		# targets that already have scanned port directories (avoid rescanning known ports).
+		if config['only_new_ports'] and not imported_service_specs and not skip_port_scans:
+			already_scanned = get_scanned_ports(target)
+			if already_scanned:
+				info('Target {byellow}' + target.address + '{rst} already has ' + str(len(already_scanned)) + ' scanned port(s); skipping active port scans due to --only-new-ports', verbosity=1)
+				skip_port_scans = True
 
 		if not imported_service_specs and not skip_port_scans:
 			for plugin in target.autorecon.plugin_types['port']:
@@ -1187,7 +1278,7 @@ async def run():
 	parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, description='Network reconnaissance tool to port scan and automatically enumerate services found on multiple targets.')
 	parser.add_argument('targets', action='store', help='IP addresses (e.g. 10.0.0.1), CIDR notation (e.g. 10.0.0.1/24), or resolvable hostnames (e.g. foo.bar) to scan.', nargs='*')
 	parser.add_argument('-t', '--target-file', action='store', type=str, default='', help='Read targets from file.')
-	parser.add_argument('-p', '--ports', action='store', type=str, help='Comma separated list of ports / port ranges to scan. Specify TCP/UDP ports by prepending list with T:/U: To scan both TCP/UDP, put port(s) at start or specify B: e.g. 53,T:21-25,80,U:123,B:123. Default: %(default)s')
+	parser.add_argument('-p', '--ports', action='store', type=str, help='Comma separated list of ports / port ranges to scan. Specify TCP/UDP ports by prepending list with T:/U: To scan both TCP/UDP, put port(s) at start or specify B: e.g. 53,T:21-25,80,U:123,B:123. Also filters services imported via --nmap-import / --nmap-import-dir. Default: %(default)s')
 	parser.add_argument('-m', '--max-scans', action='store', type=int, help='The maximum number of concurrent scans to run. Default: %(default)s')
 	parser.add_argument('-mp', '--max-port-scans', action='store', type=int, help='The maximum number of concurrent port scans to run. Default: 10 (approx 20%% of max-scans unless specified)')
 	parser.add_argument('--nmap-import', action='store', nargs='+', metavar='FILE', help='Use existing Nmap result files instead of running initial port scans. Default: %(default)s')
@@ -1222,6 +1313,7 @@ async def run():
 	parser.add_argument('-mpti', '--max-plugin-target-instances', action='store', nargs='+', metavar='PLUGIN:NUMBER', help='A space separated list of plugin slugs with the max number of instances (per target) in the following style: nmap-http:2 dirbuster:1. Default: %(default)s')
 	parser.add_argument('-mpgi', '--max-plugin-global-instances', action='store', nargs='+', metavar='PLUGIN:NUMBER', help='A space separated list of plugin slugs with the max number of global instances in the following style: nmap-http:2 dirbuster:1. Default: %(default)s')
 	parser.add_argument('--accessible', action='store_true', help='Attempts to make AutoRecon output more accessible to screenreaders. Default: %(default)s')
+	parser.add_argument('--only-new-ports', action='store_true', help='Only enumerate services on ports that have not already been scanned in the target\'s output directory (detected by existing scans/<protocol><port> directories). Ports that already have a directory are skipped and will not be re-scanned. Primarily intended for use with --nmap-import / --nmap-import-dir, where imported services for already-scanned ports are dropped and only new ports are enumerated. Default: %(default)s')
 	parser.add_argument('-v', '--verbose', action='count', help='Enable verbose output. Repeat for more verbosity.')
 	parser.add_argument('--version', action='store_true', help='Prints the AutoRecon version and exits.')
 	parser.error = lambda s: fail(s[0].upper() + s[1:])
